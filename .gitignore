@@ -1,0 +1,36 @@
+# dbt artifacts
+target/
+dbt_packages/
+logs/
+
+# DuckDB database files
+*.duckdb
+*.duckdb.wal
+
+# Raw data (download locally from Kaggle)
+data/raw/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+build/
+.eggs/
+
+# Secrets / credentials
+.env
+*.env.*
+profiles.yml.secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp

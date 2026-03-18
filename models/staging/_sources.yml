@@ -1,0 +1,86 @@
+version: 2
+
+sources:
+  - name: olist
+    description: Raw Olist Brazilian e-commerce CSV files loaded into DuckDB.
+    schema: main
+    tables:
+      - name: orders
+        description: One row per order.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_orders_dataset.csv')"
+        columns:
+          - name: order_id
+            tests: [unique, not_null]
+          - name: customer_id
+            tests: [not_null]
+
+      - name: customers
+        description: Customer geolocation + unique identifier mapping.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_customers_dataset.csv')"
+        columns:
+          - name: customer_id
+            tests: [unique, not_null]
+          - name: customer_unique_id
+            tests: [not_null]
+
+      - name: order_items
+        description: Line items within each order.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_order_items_dataset.csv')"
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: order_item_id
+            tests: [not_null]
+
+      - name: order_reviews
+        description: Post-delivery review scores and comments.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_order_reviews_dataset.csv')"
+        columns:
+          - name: review_id
+            tests: [not_null]
+          - name: order_id
+            tests: [not_null]
+
+      - name: order_payments
+        description: Payment type and installments per order.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_order_payments_dataset.csv')"
+        columns:
+          - name: order_id
+            tests: [not_null]
+
+      - name: products
+        description: Product catalogue with category and dimensions.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_products_dataset.csv')"
+        columns:
+          - name: product_id
+            tests: [unique, not_null]
+
+      - name: sellers
+        description: Seller geolocation.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_sellers_dataset.csv')"
+        columns:
+          - name: seller_id
+            tests: [unique, not_null]
+
+      - name: category_translation
+        description: Portuguese to English product category name translation.
+        meta:
+          external_location: "read_csv_auto('data/raw/product_category_name_translation.csv')"
+        columns:
+          - name: product_category_name
+            tests: [unique, not_null]
+
+      - name: geolocation
+        description: Lat/lon coordinates keyed by Brazilian zip code prefix.
+        meta:
+          external_location: "read_csv_auto('data/raw/olist_geolocation_dataset.csv')"
+        columns:
+          - name: geolocation_zip_code_prefix
+            tests: [not_null]

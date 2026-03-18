@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: int_orders_enriched
+    description: >
+      Orders joined with payments and reviews; includes delivery performance
+      and review metrics at the order grain.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+
+  - name: int_customer_orders
+    description: >
+      Order history aggregated to the customer_unique_id grain; spend,
+      review scores, and delivery performance per customer.
+    columns:
+      - name: customer_unique_id
+        tests: [unique, not_null]

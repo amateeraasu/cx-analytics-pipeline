@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: Cleaned orders with typed timestamps and status.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+      - name: order_status
+        tests:
+          - accepted_values:
+              values:
+                - approved
+                - canceled
+                - created
+                - delivered
+                - invoiced
+                - processing
+                - shipped
+                - unavailable
+
+  - name: stg_customers
+    description: Deduplicated customers with state and zip prefix.
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: customer_unique_id
+        tests: [not_null]
+
+  - name: stg_order_items
+    description: Order line items with price and freight.
+    columns:
+      - name: order_item_sk
+        tests: [unique, not_null]
+
+  - name: stg_order_reviews
+    description: Review scores and timestamps; one review per order.
+    columns:
+      - name: review_id
+        tests: [not_null]
+      - name: order_id
+        tests: [not_null]
+      - name: review_score
+        tests:
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+
+  - name: stg_order_payments
+    description: Payment aggregated to order level.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+
+  - name: stg_products
+    description: Products with English category names.
+    columns:
+      - name: product_id
+        tests: [unique, not_null]
+
+  - name: stg_sellers
+    description: Sellers with state and zip prefix.
+    columns:
+      - name: seller_id
+        tests: [unique, not_null]
