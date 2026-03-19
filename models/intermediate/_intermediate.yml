@@ -9,6 +9,20 @@ models:
       - name: order_id
         tests: [unique, not_null]
 
+  - name: int_churn_features
+    description: >
+      Feature store for churn prediction at the customer_unique_id grain.
+      Churn label = 1 if no order placed in the 90 days before the dataset reference date.
+      Only includes customers whose first order is >90 days before reference date.
+    columns:
+      - name: customer_unique_id
+        tests: [unique, not_null]
+      - name: is_churned
+        tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1]
+
   - name: int_customer_orders
     description: >
       Order history aggregated to the customer_unique_id grain; spend,

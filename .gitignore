@@ -21,6 +21,10 @@ dist/
 build/
 .eggs/
 
+# dbt local config (path varies per developer)
+profiles.yml
+.user.yml
+
 # Secrets / credentials
 .env
 *.env.*
