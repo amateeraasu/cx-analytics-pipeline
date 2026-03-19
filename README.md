@@ -8,8 +8,8 @@ dbt + DuckDB analytics pipeline for B2C customer experience analysis, built on t
 | Layer | Models | Purpose |
 |-------|--------|---------|
 | **Staging** | `stg_orders`, `stg_customers`, `stg_order_items`, `stg_order_reviews`, `stg_order_payments`, `stg_products`, `stg_sellers`, `stg_geolocation` | Rename columns, cast types, light null handling |
-| **Intermediate** | `int_orders_enriched`, `int_customer_orders` | Delivery KPIs, review joins, customer-level aggregation |
-| **Marts** | `fct_orders`, `dim_customers`, `cx_satisfaction_summary` | Reporting-ready tables with segments and monthly KPIs |
+| **Intermediate** | `int_orders_enriched`, `int_customer_orders`, `int_churn_features` | Delivery KPIs, review joins, customer-level aggregation, RFM churn features |
+| **Marts** | `fct_orders`, `dim_customers`, `cx_satisfaction_summary`, `mart_churn_predictions` | Reporting-ready tables with segments, monthly KPIs, and churn scores |
 
 ## Key Metrics
 
@@ -18,6 +18,35 @@ dbt + DuckDB analytics pipeline for B2C customer experience analysis, built on t
 - **Days to deliver** — purchase → customer delivery
 - **Average order value (BRL)**
 - **Customer segments** — one-time / repeat / loyal; satisfied / neutral / dissatisfied
+
+## Churn Prediction
+
+`notebooks/churn_prediction.ipynb` trains three classifiers on the `int_churn_features` feature store to identify customers unlikely to reorder within 90 days.
+
+**Dataset:** 86,924 customers (Sep 2016 – Oct 2018) · 99.7% churn rate (Olist is a structurally one-time-purchase marketplace)
+
+**Results:**
+
+| Model | ROC-AUC | F1 Retained | Recall Retained |
+|---|---|---|---|
+| Logistic Regression | 1.000 | 0.925 | 0.896 |
+| Random Forest | 1.000 | 0.990 | 0.979 |
+| XGBoost | 1.000 | 0.979 | 0.979 |
+
+All models achieve perfect ROC-AUC; Random Forest has the best minority-class F1. The primary metric is **F1 on the retained class (label=0)** — correctly identifying the ~240 customers who do reorder is the actionable signal on this platform.
+
+**Top churn drivers (by feature importance):**
+1. `days_since_last_order` — recency is the dominant signal
+2. `days_since_first_order` — old inactive customers are high-risk
+3. `order_frequency_segment_one_time` — one-time buyers churn at ~100%
+4. `order_frequency_segment_repeat` — repeat buyers churn far less
+5. `satisfaction_segment_dissatisfied` — low review scores predict churn
+
+Predictions are exported to `data/churn_predictions.csv` and materialised as `mart_churn_predictions` in DuckDB.
+
+```python
+con.execute("SELECT * FROM main_customer_experience.mart_churn_predictions WHERE predicted_label = 0").fetchdf()
+```
 
 ## Quick Start
 
