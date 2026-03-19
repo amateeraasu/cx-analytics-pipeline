@@ -7,7 +7,7 @@ across different problem domains.
 
 ## Projects
 
-### 1. Telco Customer Churn Prediction — [kaggle-competition](../kaggle_competition/)
+### 1. Telco Customer Churn Prediction — [kaggle-competition](../https://www.kaggle.com/competitions/playground-series-s6e3/overview/)
 
 ML pipeline on **594K telecom records** (Kaggle Playground Series S6E3).
 Feature engineering in SQL (dbt), modeling in Python.
