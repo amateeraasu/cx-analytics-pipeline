@@ -1,32 +1,4 @@
-# Analytics Engineering Portfolio
-
-Two end-to-end dbt + DuckDB pipelines demonstrating production-grade Analytics Engineering
-across different problem domains.
-
----
-
-## Projects
-
-### 1. Telco Customer Churn Prediction — [kaggle-competition](https://www.kaggle.com/competitions/playground-series-s6e3/overview/)
-
-ML pipeline on **594K telecom records** (Kaggle Playground Series S6E3).
-Feature engineering in SQL (dbt), modeling in Python.
-
-| | |
-|---|---|
-| **Evaluation** | ROC-AUC |
-| **Best result** | XGBoost + LightGBM blend — **0.916 AUC** |
-| **Logistic Regression** | 0.911 AUC — within 0.005 of tree models |
-| **Key insight** | SQL feature engineering, not model complexity, drives performance |
-| **Stack** | dbt · DuckDB · XGBoost · LightGBM · SHAP |
-
-- 3 dbt models, **108 data tests**, all passing
-- `is_high_risk` composite flag → **71% churn rate** validated in SQL before a single model was trained
-- SHAP waterfall plots bridge ML output to business retention recommendations
-
----
-
-### 2. CX Analytics Pipeline — (this repo)
+# CX Analytics Pipeline
 
 dbt + DuckDB analytics pipeline for B2C customer experience analysis, extended with a churn
 prediction model — built on the
