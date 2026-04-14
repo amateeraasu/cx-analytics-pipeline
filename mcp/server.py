@@ -27,6 +27,7 @@ import re
 import duckdb
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+from audit_logger import timed_query
 
 # ── Path to the compiled DuckDB file ────────────────────────────────────────
 REPO_ROOT = Path(__file__).parent.parent
@@ -56,25 +57,34 @@ def _connect() -> duckdb.DuckDBPyConnection:
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _safe_query(sql: str, params: list | None = None) -> list[dict]:
-    """Execute a parameterised read-only SQL query and return rows as dicts.
+def _safe_query(
+    sql: str,
+    params: list | None = None,
+    *,
+    _caller: str = "run_sql",
+    _audit_params: dict | None = None,
+) -> list[dict]:
+    """Execute a parameterised read-only SQL query, audit every execution.
 
     Args:
-        sql:    Query string. User-supplied values must be ? placeholders —
-                never interpolated via f-strings.
-        params: Positional values bound to each ? placeholder in order.
-
-    DuckDB parameter binding syntax:
-        con.execute("SELECT * FROM t WHERE col = ? AND n >= ?", ["val", 42])
-        → DuckDB escapes each value before substitution; no injection possible.
+        sql:           Query string with ? placeholders for user values.
+        params:        Values bound to ? placeholders in order.
+        _caller:       Tool function name — written to the audit log.
+        _audit_params: Tool-level input parameters written to the audit log.
+                       These are filter criteria (not row data).
     """
     sql_upper = sql.strip().upper()
     if not sql_upper.startswith("SELECT") and not sql_upper.startswith("WITH"):
         raise ValueError("Only SELECT / WITH queries are allowed.")
-    with _connect() as con:
-        rel = con.execute(sql, params or [])
-        cols = [d[0] for d in rel.description]
-        return [dict(zip(cols, row)) for row in rel.fetchall()]
+
+    with timed_query(_caller, _audit_params or {}, sql) as ctx:
+        with _connect() as con:
+            rel = con.execute(sql, params or [])
+            cols = [d[0] for d in rel.description]
+            rows = [dict(zip(cols, row)) for row in rel.fetchall()]
+        ctx["row_count"] = len(rows)
+
+    return rows
 
 
 def _require_iso_date(value: str, name: str) -> str:
@@ -106,7 +116,7 @@ def run_sql(query: str) -> list[dict]:
       ORDER BY avg_delivery_days DESC
       LIMIT 10
     """
-    return _safe_query(query)
+    return _safe_query(query, _caller="run_sql", _audit_params={"query_preview": query[:80]})
 
 
 # ── Tool 2: Monthly KPIs ─────────────────────────────────────────────────────
@@ -146,7 +156,11 @@ def get_monthly_kpis(
         WHERE order_month BETWEEN ? AND ?
         ORDER BY order_month
     """
-    return _safe_query(sql, [start_month, end_month])
+    return _safe_query(
+        sql, [start_month, end_month],
+        _caller="get_monthly_kpis",
+        _audit_params={"start_month": start_month, "end_month": end_month},
+    )
 
 
 # ── Tool 3: Customer segments ────────────────────────────────────────────────
@@ -221,7 +235,17 @@ def get_customer_segments(
         LIMIT ?
     """
     params.append(limit)
-    return _safe_query(sql, params)
+    return _safe_query(
+        sql, params,
+        _caller="get_customer_segments",
+        _audit_params={
+            "state": state,
+            "order_frequency_segment": order_frequency_segment,
+            "satisfaction_segment": satisfaction_segment,
+            "min_total_spend_brl": min_total_spend_brl,
+            "limit": limit,
+        },
+    )
 
 
 # ── Tool 4: Churn risk ───────────────────────────────────────────────────────
@@ -283,7 +307,16 @@ def get_churn_risk(
         LIMIT ?
     """
     params.append(limit)
-    return _safe_query(sql, params)
+    return _safe_query(
+        sql, params,
+        _caller="get_churn_risk",
+        _audit_params={
+            "risk_tier": risk_tier,
+            "state": state,
+            "min_spend_brl": min_spend_brl,
+            "limit": limit,
+        },
+    )
 
 
 # ── Tool 5: Delivery performance by dimension ────────────────────────────────
@@ -346,7 +379,11 @@ def get_delivery_performance(
     """
     # group_by is safe: validated against an explicit allowlist above.
     # min_orders and limit are user-supplied integers → parameterized.
-    return _safe_query(sql, [int(min_orders), int(limit)])
+    return _safe_query(
+        sql, [int(min_orders), int(limit)],
+        _caller="get_delivery_performance",
+        _audit_params={"group_by": group_by, "min_orders": min_orders, "limit": limit},
+    )
 
 
 # ── Tool 6: Schema explorer ──────────────────────────────────────────────────
@@ -366,7 +403,7 @@ def list_tables() -> list[dict]:
         GROUP BY table_name
         ORDER BY table_name
     """
-    return _safe_query(sql)
+    return _safe_query(sql, _caller="list_tables", _audit_params={"schema": SCHEMA})
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
