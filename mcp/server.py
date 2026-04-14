@@ -35,7 +35,7 @@ SCHEMA = "main_customer_experience"
 
 mcp = FastMCP(
     name="cx-analytics",
-    description=(
+    instructions=(
         "Query the CX Analytics Platform — 100K+ e-commerce orders, "
         "customer satisfaction KPIs, delivery performance, and churn predictions. "
         "All data is from the Olist Brazilian E-Commerce dataset (2016–2018)."
