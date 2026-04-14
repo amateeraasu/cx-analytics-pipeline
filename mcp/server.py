@@ -23,7 +23,7 @@ Example questions Claude can answer once connected:
   - "How does average review score differ between one-time and repeat customers?"
 """
 
-import os
+import re
 import duckdb
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
@@ -53,15 +53,37 @@ def _connect() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=True)
 
 
-def _safe_query(sql: str) -> list[dict]:
-    """Execute a read-only SQL query and return rows as dicts."""
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _safe_query(sql: str, params: list | None = None) -> list[dict]:
+    """Execute a parameterised read-only SQL query and return rows as dicts.
+
+    Args:
+        sql:    Query string. User-supplied values must be ? placeholders —
+                never interpolated via f-strings.
+        params: Positional values bound to each ? placeholder in order.
+
+    DuckDB parameter binding syntax:
+        con.execute("SELECT * FROM t WHERE col = ? AND n >= ?", ["val", 42])
+        → DuckDB escapes each value before substitution; no injection possible.
+    """
     sql_upper = sql.strip().upper()
     if not sql_upper.startswith("SELECT") and not sql_upper.startswith("WITH"):
         raise ValueError("Only SELECT / WITH queries are allowed.")
     with _connect() as con:
-        rel = con.execute(sql)
+        rel = con.execute(sql, params or [])
         cols = [d[0] for d in rel.description]
         return [dict(zip(cols, row)) for row in rel.fetchall()]
+
+
+def _require_iso_date(value: str, name: str) -> str:
+    """Raise ValueError if value is not YYYY-MM-DD. Returns value unchanged."""
+    if not _ISO_DATE_RE.match(value):
+        raise ValueError(
+            f"'{name}' must be an ISO date (YYYY-MM-DD), got: {value!r}"
+        )
+    return value
 
 
 # ── Tool 1: Run arbitrary SQL ────────────────────────────────────────────────
@@ -104,6 +126,10 @@ def get_monthly_kpis(
 
     Returns one row per month within the range, ordered chronologically.
     """
+    # BLOCKED: "2017-01-01' OR '1'='1' --"  → ValueError before query runs
+    _require_iso_date(start_month, "start_month")
+    _require_iso_date(end_month, "end_month")
+
     sql = f"""
         SELECT
             order_month,
@@ -117,10 +143,10 @@ def get_monthly_kpis(
             low_score_orders,
             voucher_orders
         FROM {SCHEMA}.cx_satisfaction_summary
-        WHERE order_month BETWEEN '{start_month}' AND '{end_month}'
+        WHERE order_month BETWEEN ? AND ?
         ORDER BY order_month
     """
-    return _safe_query(sql)
+    return _safe_query(sql, [start_month, end_month])
 
 
 # ── Tool 3: Customer segments ────────────────────────────────────────────────
@@ -146,17 +172,34 @@ def get_customer_segments(
     Returns customer records sorted by total spend descending.
     """
     limit = min(limit, 500)
-    filters = ["1=1"]
-    if state:
-        filters.append(f"state = '{state.upper()}'")
-    if order_frequency_segment:
-        filters.append(f"order_frequency_segment = '{order_frequency_segment}'")
-    if satisfaction_segment:
-        filters.append(f"satisfaction_segment = '{satisfaction_segment}'")
-    if min_total_spend_brl > 0:
-        filters.append(f"total_spend_brl >= {min_total_spend_brl}")
 
-    where = " AND ".join(filters)
+    # Build WHERE clauses and params list together — ? placeholders only,
+    # no user input ever touches the SQL string.
+    #
+    # BLOCKED: state="SP' OR '1'='1"
+    #   Before: WHERE state = 'SP' OR '1'='1'   → returns all rows
+    #   After:  WHERE state = ?  params=["SP' OR '1'='1"]  → 0 rows (no match)
+    #
+    # BLOCKED: order_frequency_segment="one_time' UNION SELECT * FROM secrets --"
+    #   After:  WHERE order_frequency_segment = ?  → treated as literal string
+    filters: list[str] = []
+    params: list = []
+
+    if state:
+        filters.append("state = ?")
+        params.append(state.upper())
+    if order_frequency_segment:
+        filters.append("order_frequency_segment = ?")
+        params.append(order_frequency_segment)
+    if satisfaction_segment:
+        filters.append("satisfaction_segment = ?")
+        params.append(satisfaction_segment)
+    if min_total_spend_brl > 0:
+        filters.append("total_spend_brl >= ?")
+        params.append(float(min_total_spend_brl))
+
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+
     sql = f"""
         SELECT
             customer_unique_id,
@@ -173,11 +216,12 @@ def get_customer_segments(
             last_order_at,
             customer_lifespan_days
         FROM {SCHEMA}.dim_customers
-        WHERE {where}
+        {where}
         ORDER BY total_spend_brl DESC
-        LIMIT {limit}
+        LIMIT ?
     """
-    return _safe_query(sql)
+    params.append(limit)
+    return _safe_query(sql, params)
 
 
 # ── Tool 4: Churn risk ───────────────────────────────────────────────────────
@@ -203,15 +247,24 @@ def get_churn_risk(
     Returns customers sorted by churn probability descending.
     """
     limit = min(limit, 500)
-    filters = ["1=1"]
-    if risk_tier:
-        filters.append(f"churn_risk_tier = '{risk_tier}'")
-    if state:
-        filters.append(f"state = '{state.upper()}'")
-    if min_spend_brl > 0:
-        filters.append(f"total_spend_brl >= {min_spend_brl}")
 
-    where = " AND ".join(filters)
+    # BLOCKED: risk_tier="high' UNION SELECT customer_id, password FROM users --"
+    #   After:  WHERE churn_risk_tier = ?  → literal string match, UNION never executes
+    filters: list[str] = []
+    params: list = []
+
+    if risk_tier:
+        filters.append("churn_risk_tier = ?")
+        params.append(risk_tier)
+    if state:
+        filters.append("state = ?")
+        params.append(state.upper())
+    if min_spend_brl > 0:
+        filters.append("total_spend_brl >= ?")
+        params.append(float(min_spend_brl))
+
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+
     sql = f"""
         SELECT
             customer_unique_id,
@@ -225,11 +278,12 @@ def get_churn_risk(
             avg_review_score,
             last_order_at
         FROM {SCHEMA}.mart_churn_predictions
-        WHERE {where}
+        {where}
         ORDER BY churn_probability DESC
-        LIMIT {limit}
+        LIMIT ?
     """
-    return _safe_query(sql)
+    params.append(limit)
+    return _safe_query(sql, params)
 
 
 # ── Tool 5: Delivery performance by dimension ────────────────────────────────
@@ -286,11 +340,13 @@ def get_delivery_performance(
         FROM {from_clause}
         WHERE {where_clause}
         GROUP BY {dim_col}
-        HAVING count(*) >= {min_orders}
+        HAVING count(*) >= ?
         ORDER BY avg_days_to_deliver DESC
-        LIMIT {limit}
+        LIMIT ?
     """
-    return _safe_query(sql)
+    # group_by is safe: validated against an explicit allowlist above.
+    # min_orders and limit are user-supplied integers → parameterized.
+    return _safe_query(sql, [int(min_orders), int(limit)])
 
 
 # ── Tool 6: Schema explorer ──────────────────────────────────────────────────
