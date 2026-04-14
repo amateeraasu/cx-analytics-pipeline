@@ -258,25 +258,34 @@ def get_delivery_performance(
     if group_by not in allowed:
         raise ValueError(f"group_by must be one of: {allowed}")
 
+    # state lives in dim_customers — needs a join
+    if group_by == "state":
+        dim_col = "c.state"
+        from_clause = f"{SCHEMA}.fct_orders f JOIN {SCHEMA}.dim_customers c USING (customer_sk)"
+        where_clause = "f.order_status = 'delivered' AND c.state IS NOT NULL"
+    else:
+        dim_col = f"f.{group_by}"
+        from_clause = f"{SCHEMA}.fct_orders f"
+        where_clause = f"f.order_status = 'delivered' AND f.{group_by} IS NOT NULL"
+
     sql = f"""
         SELECT
-            {group_by}                                                AS dimension,
+            {dim_col}                                                 AS dimension,
             count(*)                                                  AS total_orders,
-            round(avg(days_to_deliver), 2)                           AS avg_days_to_deliver,
-            round(avg(delivery_delta_days), 2)                       AS avg_delta_vs_estimate,
+            round(avg(f.days_to_deliver), 2)                         AS avg_days_to_deliver,
+            round(avg(f.delivery_delta_days), 2)                     AS avg_delta_vs_estimate,
             round(
-                sum(CASE WHEN delivered_on_time THEN 1 ELSE 0 END)::float
+                sum(CASE WHEN f.delivered_on_time THEN 1 ELSE 0 END)::float
                 / nullif(count(*), 0) * 100, 1
             )                                                         AS on_time_pct,
-            round(avg(review_score), 3)                              AS avg_review_score,
+            round(avg(f.review_score), 3)                            AS avg_review_score,
             round(
-                sum(CASE WHEN review_score >= 4 THEN 1 ELSE 0 END)::float
-                / nullif(count(review_score), 0) * 100, 1
+                sum(CASE WHEN f.review_score >= 4 THEN 1 ELSE 0 END)::float
+                / nullif(count(f.review_score), 0) * 100, 1
             )                                                         AS csat_pct
-        FROM {SCHEMA}.fct_orders
-        WHERE order_status = 'delivered'
-          AND {group_by} IS NOT NULL
-        GROUP BY {group_by}
+        FROM {from_clause}
+        WHERE {where_clause}
+        GROUP BY {dim_col}
         HAVING count(*) >= {min_orders}
         ORDER BY avg_days_to_deliver DESC
         LIMIT {limit}
