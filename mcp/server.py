@@ -23,8 +23,8 @@ Example questions Claude can answer once connected:
   - "How does average review score differ between one-time and repeat customers?"
 """
 
-import re
 import duckdb
+from datetime import date
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from audit_logger import timed_query
@@ -54,7 +54,69 @@ def _connect() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=True)
 
 
-_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Dataset boundaries — dates outside this range return no rows anyway,
+# and accepting arbitrary future dates widens the attack surface needlessly.
+_DATASET_MIN = date(2016, 1, 1)
+_DATASET_MAX = date(2018, 12, 31)
+
+
+def date_validator(
+    value: str,
+    name: str,
+    *,
+    min_date: date = _DATASET_MIN,
+    max_date: date = _DATASET_MAX,
+) -> date:
+    """Parse and validate an ISO date string. Return a datetime.date object.
+
+    Defences layered in order:
+      1. datetime.date.fromisoformat() rejects every non-YYYY-MM-DD string,
+         including injection payloads, slashes, and impossible calendar dates.
+         A regex like r"^\\d{4}-\\d{2}-\\d{2}$" passes "2016-02-31"; fromisoformat
+         raises ValueError for it.
+      2. Boundary check rejects dates outside the dataset window so callers
+         cannot probe for data that does not exist.
+      3. Error messages name the parameter but never expose internal path,
+         schema names, or implementation details.
+
+    Args:
+        value:    Candidate date string from the caller.
+        name:     Parameter name — included in ValueError for caller context.
+        min_date: Earliest accepted date (default: dataset start 2016-01-01).
+        max_date: Latest accepted date (default: dataset end 2018-12-31).
+
+    Returns:
+        datetime.date — safe to pass directly as a DuckDB ? parameter.
+
+    Raises:
+        ValueError: on invalid format, impossible calendar date, or out-of-range.
+
+    Blocked examples:
+        "01/01/2016"              → ValueError (wrong format)
+        "2016-02-31"              → ValueError (impossible date)
+        "2016-01-01' OR '1'='1"  → ValueError (fromisoformat rejects on first
+                                    non-digit after position 10)
+        "2020-01-01"              → ValueError (outside dataset range)
+        "2017-06-15"              → date(2017, 6, 15)  ✓
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"'{name}' must be a string.")
+
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        # Don't echo the value back — it may contain injection payload.
+        raise ValueError(
+            f"'{name}' is not a valid date. Expected YYYY-MM-DD."
+        )
+
+    if not (min_date <= parsed <= max_date):
+        raise ValueError(
+            f"'{name}' is outside the accepted range "
+            f"({min_date} to {max_date})."
+        )
+
+    return parsed
 
 
 def _safe_query(
@@ -131,14 +193,16 @@ def get_monthly_kpis(
     total orders, and GMV (BRL).
 
     Args:
-        start_month: ISO date string for the start of the range (e.g. '2017-01-01').
-        end_month:   ISO date string for the end of the range (e.g. '2017-12-31').
+        start_month: ISO date string, YYYY-MM-DD. Accepted range: 2016-01-01 to 2018-12-31.
+        end_month:   ISO date string, YYYY-MM-DD. Must be >= start_month.
 
     Returns one row per month within the range, ordered chronologically.
     """
-    # BLOCKED: "2017-01-01' OR '1'='1' --"  → ValueError before query runs
-    _require_iso_date(start_month, "start_month")
-    _require_iso_date(end_month, "end_month")
+    start = date_validator(start_month, "start_month")
+    end   = date_validator(end_month,   "end_month")
+
+    if start > end:
+        raise ValueError("'start_month' must not be later than 'end_month'.")
 
     sql = f"""
         SELECT
@@ -156,10 +220,11 @@ def get_monthly_kpis(
         WHERE order_month BETWEEN ? AND ?
         ORDER BY order_month
     """
+    # Pass date objects directly — DuckDB binds them as DATE without string parsing.
     return _safe_query(
-        sql, [start_month, end_month],
+        sql, [start, end],
         _caller="get_monthly_kpis",
-        _audit_params={"start_month": start_month, "end_month": end_month},
+        _audit_params={"start_month": str(start), "end_month": str(end)},
     )
 
 
