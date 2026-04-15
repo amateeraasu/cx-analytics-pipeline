@@ -1,23 +1,26 @@
 # CX Analytics Platform
 
-> End-to-end analytics pipeline on 100K+ real e-commerce orders — dbt transformation, churn prediction, and natural language querying via Claude MCP.
+> End-to-end customer experience analytics: dbt pipeline → Databricks Delta Lake → AI-powered querying → interactive dashboard
 
 [![dbt](https://img.shields.io/badge/dbt-FF694B?style=flat&logo=dbt&logoColor=white)](https://www.getdbt.com/)
 [![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=flat&logo=duckdb&logoColor=black)](https://duckdb.org/)
+[![Databricks](https://img.shields.io/badge/Databricks-FF3621?style=flat&logo=databricks&logoColor=white)](https://databricks.com/)
+[![Spark SQL](https://img.shields.io/badge/Spark_SQL-E25A1C?style=flat&logo=apache-spark&logoColor=white)](https://spark.apache.org/)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)](https://python.org/)
 [![XGBoost](https://img.shields.io/badge/XGBoost-337AB7?style=flat)](https://xgboost.readthedocs.io/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Claude API](https://img.shields.io/badge/Claude_API-191919?style=flat&logo=anthropic&logoColor=white)](https://anthropic.com/)
+[![Claude MCP](https://img.shields.io/badge/Claude_MCP-191919?style=flat&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io/)
 
-## What This Project Does
+## What this project demonstrates
 
-This pipeline takes raw Brazilian e-commerce data (9 source tables, 100K+ orders) and answers three business questions:
-
-1. **Which delivery failures are killing customer satisfaction — and which sellers are responsible?**
-2. **Which of the rare repeat customers are likely to churn, and what predicts their retention?**
-3. **How can a non-technical stakeholder query those results without writing SQL?**
-
-The answer to #3 is an MCP server that connects Claude directly to the DuckDB analytics layer — enabling plain-English questions against the mart tables.
+| Skill | Implementation |
+|---|---|
+| **dbt** | 13 models across 3 layers (staging → intermediate → marts), 40 automated quality tests |
+| **Databricks / Spark SQL** | Medallion architecture (Bronze → Silver → Gold), 15 Delta Lake tables, window functions, Delta time travel |
+| **Python / ML** | XGBoost + Random Forest churn prediction, feature engineering in dbt, 0.979 recall on retained customers |
+| **SQL** | Advanced window functions, multi-step CTEs, cohort analysis, correlated subqueries — see `sql/advanced_queries.sql` |
+| **MCP + Claude** | AI agent that queries the analytics database in natural language via 6 structured tools |
+| **Streamlit** | Interactive KPI dashboard: monthly trends, delivery by state, churn risk explorer |
 
 ---
 
@@ -29,21 +32,24 @@ flowchart LR
     B --> C["dbt Intermediate\n3 models\ndelivery KPIs · RFM\nfeature engineering"]
     C --> D["dbt Marts\n4 models\nfct_orders · dim_customers\ncx_satisfaction_summary\nmart_churn_predictions"]
     D --> E[("DuckDB\ncx_analytics.duckdb")]
-    E --> F["Jupyter Notebooks\nEDA · A/B test\nRandom Forest churn"]
-    E --> G["Streamlit Dashboard\nKPI explorer\n(in progress)"]
-    E --> H["MCP Server\nClaude queries\nnatural language\n(in progress)"]
+    E --> F["Jupyter Notebooks\nchurn prediction\nA/B test analysis"]
+    E --> G["Streamlit Dashboard\nKPI explorer\ndelivery · churn"]
+    E --> H["MCP Server\nClaude queries\nnatural language → SQL"]
+    A --> I["Databricks Notebooks\nBronze → Silver → Gold\nDelta Lake · 15 tables"]
 ```
+
+See [`docs/architecture.md`](docs/architecture.md) for the full diagram, schema reference, and design decisions.
 
 ---
 
-## Key Results
+## Key business insights
 
 Analysis of **99,441 orders** across 3 years (2016–2018):
 
-- **On-time delivery is the dominant satisfaction driver** — orders delivered 3+ days late receive low review scores at a rate far exceeding any other variable, including price or product category
-- **226 customers predicted to retain** out of 86,924 total (0.3% of the customer base). These are the high-value targets for retention campaigns — the model identifies them with 0.979 recall
-- **Random Forest wins on retention recall** — all three models (LR, RF, XGBoost) achieve 1.000 ROC-AUC on this imbalanced dataset; Random Forest separates itself with the most calibrated decision threshold (0.303 vs 0.006 for LR), indicating real probability signal rather than edge predictions
-- **`days_since_last_order` dominates feature importance** — recency alone is near-sufficient to identify retained customers, consistent with Olist's marketplace structure where repeat purchases are structurally rare
+1. **Delivery time is the dominant satisfaction driver** — orders arriving 3+ days late score 4+ stars at only 52% vs. 89% for orders delivered on time. The correlation is visible across all 27 Brazilian states.
+2. **97.8% of customers are one-time buyers** — Olist is structurally a single-purchase marketplace. The 2.2% who reorder are measurably different: higher average spend, shorter delivery times, and higher satisfaction scores.
+3. **Random Forest identifies 97.9% of retained customers** (recall = 0.979) — `days_since_last_order` dominates feature importance, consistent with RFM theory. The model threshold (0.303) is well-calibrated; XGBoost and LR produce extreme thresholds (0.999 / 0.006) suggesting overfitting.
+4. **States in the North and Northeast (AM, RR, AP) average 25+ delivery days** vs. 8 days for SP — a 3× gap that directly explains their lower CSAT rates and higher churn probability in those regions.
 
 ---
 
@@ -55,7 +61,7 @@ Analysis of **99,441 orders** across 3 years (2016–2018):
 | **Intermediate** | `int_orders_enriched`, `int_customer_orders`, `int_churn_features` | Delivery KPIs, review joins, customer-level aggregation, ML feature engineering |
 | **Marts** | `fct_orders`, `dim_customers`, `cx_satisfaction_summary`, `mart_churn_predictions` | Reporting-ready tables with segments, monthly KPIs, and churn scores |
 
-All models include `not_null` and `unique` tests on primary keys. Run `dbt test` to verify.
+All models include `not_null` and `unique` tests on primary keys. Run `dbt test` to verify all 40 pass.
 
 ---
 
@@ -63,7 +69,7 @@ All models include `not_null` and `unique` tests on primary keys. Run `dbt test`
 
 ### Problem framing
 
-Olist is structurally a single-purchase marketplace — 99.7% of customers never reorder. The goal is not to predict churn (near-universal) but to identify the rare ~240 customers who exhibit repeat behaviour — the ones worth targeting for retention spend.
+Olist is structurally a single-purchase marketplace — 97.8% of customers never reorder. The goal is not to predict churn (near-universal) but to identify the rare customers who exhibit repeat behaviour — the ones worth targeting for retention spend.
 
 **Label:** `churned = 1` if no orders in the past 180 days; `retained = 0` otherwise.
 
@@ -75,11 +81,11 @@ Olist is structurally a single-purchase marketplace — 99.7% of customers never
 | **Random Forest** | **1.000** | **0.9895** | **0.9792** | **0.303** |
 | XGBoost | 1.000 | 0.9792 | 0.9792 | 0.999 |
 
-**Selected model: Random Forest.** Threshold 0.303 is the most calibrated — LR's 0.006 and XGBoost's 0.999 indicate the models are outputting extreme probabilities rather than meaningful scores.
+**Selected model: Random Forest.** Threshold 0.303 is the most calibrated — LR's 0.006 and XGBoost's 0.999 produce extreme probabilities rather than meaningful scores.
 
-### Features (engineered entirely in dbt before ML code runs)
+### Features (engineered in dbt before ML)
 
-`days_since_last_order` · `days_since_first_order` · `order_frequency_segment` · `satisfaction_segment` · average review score · freight ratio · payment installments
+`days_since_last_order` · `days_since_first_order` · `order_frequency_segment` · `satisfaction_segment` · average review score · avg days to deliver · on-time delivery count
 
 ---
 
@@ -88,61 +94,110 @@ Olist is structurally a single-purchase marketplace — 99.7% of customers never
 ```
 cx-analytics-pipeline/
 ├── models/
-│   ├── staging/          # 8 source-aligned models (stg_*)
-│   ├── intermediate/     # 3 enrichment models (int_*)
+│   ├── staging/               # 8 source-aligned models (stg_*)
+│   ├── intermediate/          # 3 enrichment models (int_*)
 │   └── marts/
 │       └── customer_experience/   # 4 reporting models
+├── databricks/
+│   ├── notebooks/
+│   │   ├── 01_bronze_ingest.py    # Raw CSV → 9 Delta Lake tables
+│   │   ├── 02_silver_transform.py # Joins · delivery KPIs · ML features
+│   │   └── 03_gold_kpis.py        # Business-ready KPI aggregations
+│   └── README.md                  # Databricks setup guide
+├── mcp/
+│   ├── server.py              # MCP server: 6 tools over DuckDB
+│   ├── audit_logger.py        # Per-query audit trail
+│   ├── data_masker.py         # PII masking decorator
+│   ├── config.json            # Claude Desktop config template
+│   └── README.md              # Setup + example prompts
+├── streamlit/
+│   ├── app.py                 # Multi-tab KPI dashboard
+│   └── requirements.txt
+├── sql/
+│   └── advanced_queries.sql   # 7 advanced SQL patterns with business context
 ├── notebooks/
-│   ├── churn_prediction.ipynb          # Random Forest + feature importance
+│   ├── churn_prediction.ipynb          # RF + XGBoost + LR comparison
 │   └── ab_test_delivery_vs_satisfaction.ipynb
-├── tests/                # Singular + generic dbt tests
-├── macros/               # Reusable Jinja helpers
-├── seeds/                # Static reference data
-├── mcp/                  # Claude MCP server (in progress)
-├── streamlit/            # KPI dashboard (in progress)
+├── docs/
+│   └── architecture.md        # Architecture diagram + schema reference
+├── tests/                     # Singular + generic dbt tests
+├── macros/                    # Reusable Jinja helpers
+├── seeds/                     # Static reference data
 └── data/
-    └── README.md         # Kaggle download instructions
+    └── raw/                   # Olist CSVs (gitignored — download from Kaggle)
 ```
 
 ---
 
 ## Quick Start
 
+### 1. Clone and set up
+
 ```bash
-# 1. Clone and create a virtual environment (Python 3.10–3.12)
 git clone https://github.com/amateeraasu/cx-analytics-pipeline.git
 cd cx-analytics-pipeline
 python3.10 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 2. Download the Olist dataset from Kaggle
+### 2. Download the Olist dataset
+
+```bash
 kaggle datasets download -d olistbr/brazilian-ecommerce -p data/raw/ --unzip
+```
 
-# 3. Build the dbt pipeline
+Or download manually from [Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) and place all CSVs in `data/raw/`.
+
+### 3. Run the dbt pipeline
+
+```bash
 dbt deps --profiles-dir .
-dbt run --profiles-dir .
-dbt test --profiles-dir .
+dbt run  --profiles-dir .
+dbt test --profiles-dir .    # all 40 tests should pass
 
-# 4. Explore the lineage graph
 dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
+```
 
-# 5. Run the churn model
+### 4. Generate churn predictions (optional)
+
+```bash
 jupyter notebook notebooks/churn_prediction.ipynb
 ```
 
+Writes `data/churn_predictions.csv` — required for the churn tab in the dashboard and `mart_churn_predictions` in DuckDB.
+
+### 5. Launch the Streamlit dashboard
+
+```bash
+pip install -r streamlit/requirements.txt
+streamlit run streamlit/app.py
+```
+
+### 6. Connect the MCP server to Claude
+
+```bash
+pip install -r mcp/requirements.txt
+```
+
+See [`mcp/README.md`](mcp/README.md) for Claude Desktop configuration and example prompts.
+
+### 7. Run Databricks notebooks (optional)
+
+See [`databricks/README.md`](databricks/README.md) for setup on Databricks Community Edition (free).
+
 ---
 
-## What Makes This Different: AI-Powered Data Access
+## Advanced SQL showcase
 
-Most analytics projects end at a dashboard. This one goes further.
+`sql/advanced_queries.sql` contains 7 standalone queries demonstrating:
 
-The `mcp/` folder (in progress) will contain a [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes the DuckDB analytics layer as Claude-queryable tools. A stakeholder — without knowing SQL — will be able to ask:
-
-> *"Which product categories have the highest churn rate among first-time buyers in Q4 2017?"*
-
-Claude calls the MCP server, which translates that into a DuckDB query against `mart_churn_predictions` and `dim_customers`, and returns a formatted answer with the underlying query shown.
-
-This is the pattern modern analytics teams are moving toward: the analytics engineer builds the semantic layer, the AI makes it accessible to everyone else.
+- **LAG + period-over-period delta** — month-over-month CSAT and GMV change
+- **Running totals** — cumulative revenue with `SUM OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`
+- **NTILE + PERCENT_RANK** — customer spending percentiles and decile segmentation
+- **Bucketed aggregation** — delivery speed vs. satisfaction impact analysis
+- **Cohort retention** — first-purchase cohort analysis with `ROW_NUMBER` and self-join
+- **Composite scoring** — churn retention priority with weighted business formula
+- **PARTITION BY ranking** — seller performance ranked within product category using `RANK() OVER (PARTITION BY ...)`
 
 ---
 
@@ -154,6 +209,6 @@ This is the pattern modern analytics teams are moving toward: the analytics engi
 
 ## About
 
-Built by **Ajara** — Analytics Engineer focused on dbt, DuckDB, Python, and AI-augmented analytics.
+Built by **Azhar Kudaibergen** — Analytics Engineer focused on dbt, DuckDB, Python, and AI-augmented analytics.
 
-[LinkedIn](https://linkedin.com/in/ajara) · [GitHub](https://github.com/amateeraasu)
+[LinkedIn](https://linkedin.com/in/azhar-kudaibergen) · [GitHub](https://github.com/amateeraasu)
