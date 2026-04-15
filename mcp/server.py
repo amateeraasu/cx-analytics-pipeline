@@ -28,6 +28,7 @@ from datetime import date
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from audit_logger import timed_query
+from data_masker import mask_pii
 
 # ── Path to the compiled DuckDB file ────────────────────────────────────────
 REPO_ROOT = Path(__file__).parent.parent
@@ -231,6 +232,7 @@ def get_monthly_kpis(
 # ── Tool 3: Customer segments ────────────────────────────────────────────────
 
 @mcp.tool()
+@mask_pii()
 def get_customer_segments(
     state: str | None = None,
     order_frequency_segment: str | None = None,
@@ -316,6 +318,7 @@ def get_customer_segments(
 # ── Tool 4: Churn risk ───────────────────────────────────────────────────────
 
 @mcp.tool()
+@mask_pii()
 def get_churn_risk(
     risk_tier: str | None = None,
     state: str | None = None,
