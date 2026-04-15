@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cx-analytics": {
+      "command": "python",
+      "args": ["/absolute/path/to/cx-analytics-pipeline/mcp/server.py"],
+      "env": {}
+    }
+  }
+}
