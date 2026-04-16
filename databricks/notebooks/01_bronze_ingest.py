@@ -25,13 +25,17 @@
 
 # COMMAND ----------
 
-# Paths — adjust if you uploaded CSVs to a different DBFS location
-RAW_PATH   = "dbfs:/FileStore/olist/raw"
-BRONZE_DB  = "olist_bronze"
-DELTA_ROOT = "dbfs:/delta/olist/bronze"
+# Unity Catalog coordinates — update CATALOG if yours differs from "main"
+CATALOG   = "main"
+SCHEMA    = "olist_bronze"
+BRONZE_DB = f"{CATALOG}.{SCHEMA}"
 
-spark.sql(f"CREATE DATABASE IF NOT EXISTS {BRONZE_DB}")
-print(f"Database '{BRONZE_DB}' ready.")
+# CSVs must be uploaded to this Volume before running:
+#   Catalog → main → olist_bronze → Volumes → olist_raw → Upload
+RAW_PATH  = f"/Volumes/{CATALOG}/{SCHEMA}/olist_raw"
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {BRONZE_DB}")
+print(f"Schema '{BRONZE_DB}' ready.")
 
 # COMMAND ----------
 
@@ -45,12 +49,12 @@ from pyspark.sql.types import *
 
 def ingest_csv(filename: str, table_name: str, transformations=None) -> int:
     """
-    Read a CSV from DBFS, optionally apply column renames/casts,
-    write to Delta Lake, and register in the metastore.
+    Read a CSV from a Unity Catalog Volume, optionally apply column renames/casts,
+    and write as a UC-managed Delta table.
 
     Args:
-        filename:        CSV filename under RAW_PATH
-        table_name:      Target Delta table (written to BRONZE_DB)
+        filename:        CSV filename under RAW_PATH (Volume path)
+        table_name:      Target table name (written into BRONZE_DB = catalog.schema)
         transformations: Optional callable(df) → df for renames/casts
 
     Returns:
@@ -72,25 +76,20 @@ def ingest_csv(filename: str, table_name: str, transformations=None) -> int:
     # Add Bronze metadata columns
     df = (
         df
-        .withColumn("_source_file",    F.lit(filename))
-        .withColumn("_ingested_at",     F.current_timestamp())
+        .withColumn("_source_file", F.lit(filename))
+        .withColumn("_ingested_at", F.current_timestamp())
     )
 
-    delta_path = f"{DELTA_ROOT}/{table_name}"
+    # Write as a UC-managed Delta table — no external path needed
     (
         df.write
         .format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
-        .save(delta_path)
+        .saveAsTable(f"{BRONZE_DB}.{table_name}")
     )
 
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {BRONZE_DB}.{table_name}
-        USING DELTA LOCATION '{delta_path}'
-    """)
-
-    n = spark.read.format("delta").load(delta_path).count()
+    n = spark.table(f"{BRONZE_DB}.{table_name}").count()
     print(f"  ✓  {BRONZE_DB}.{table_name:35s} {n:>9,} rows")
     return n
 
