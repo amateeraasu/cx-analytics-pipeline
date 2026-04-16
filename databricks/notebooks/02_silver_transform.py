@@ -22,12 +22,12 @@
 
 # COMMAND ----------
 
-BRONZE_DB  = "olist_bronze"
-SILVER_DB  = "olist_silver"
-DELTA_ROOT = "dbfs:/delta/olist/silver"
+CATALOG    = "main"
+BRONZE_DB  = f"{CATALOG}.olist_bronze"
+SILVER_DB  = f"{CATALOG}.olist_silver"
 
-spark.sql(f"CREATE DATABASE IF NOT EXISTS {SILVER_DB}")
-print(f"Database '{SILVER_DB}' ready.")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {SILVER_DB}")
+print(f"Schema '{SILVER_DB}' ready.")
 
 # COMMAND ----------
 
@@ -36,20 +36,15 @@ from pyspark.sql.types import *
 
 
 def write_silver(df, table_name: str) -> int:
-    """Write a DataFrame to a Silver Delta table and register it."""
-    delta_path = f"{DELTA_ROOT}/{table_name}"
+    """Write a DataFrame to a UC-managed Silver Delta table."""
     (
         df.write
         .format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
-        .save(delta_path)
+        .saveAsTable(f"{SILVER_DB}.{table_name}")
     )
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {SILVER_DB}.{table_name}
-        USING DELTA LOCATION '{delta_path}'
-    """)
-    n = spark.read.format("delta").load(delta_path).count()
+    n = spark.table(f"{SILVER_DB}.{table_name}").count()
     print(f"  ✓  {SILVER_DB}.{table_name:35s} {n:>9,} rows")
     return n
 

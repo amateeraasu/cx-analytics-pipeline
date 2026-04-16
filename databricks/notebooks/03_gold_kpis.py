@@ -25,12 +25,13 @@
 
 # COMMAND ----------
 
-SILVER_DB  = "olist_silver"
-GOLD_DB    = "olist_gold"
-DELTA_ROOT = "dbfs:/delta/olist/gold"
+CATALOG   = "main"
+BRONZE_DB = f"{CATALOG}.olist_bronze"
+SILVER_DB = f"{CATALOG}.olist_silver"
+GOLD_DB   = f"{CATALOG}.olist_gold"
 
-spark.sql(f"CREATE DATABASE IF NOT EXISTS {GOLD_DB}")
-print(f"Database '{GOLD_DB}' ready.")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {GOLD_DB}")
+print(f"Schema '{GOLD_DB}' ready.")
 
 # COMMAND ----------
 
@@ -38,19 +39,15 @@ from pyspark.sql import functions as F
 
 
 def write_gold(df, table_name: str) -> int:
-    delta_path = f"{DELTA_ROOT}/{table_name}"
+    """Write a DataFrame to a UC-managed Gold Delta table."""
     (
         df.write
         .format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
-        .save(delta_path)
+        .saveAsTable(f"{GOLD_DB}.{table_name}")
     )
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {GOLD_DB}.{table_name}
-        USING DELTA LOCATION '{delta_path}'
-    """)
-    n = spark.read.format("delta").load(delta_path).count()
+    n = spark.table(f"{GOLD_DB}.{table_name}").count()
     print(f"  ✓  {GOLD_DB}.{table_name:35s} {n:>6,} rows")
     return n
 
@@ -115,7 +112,7 @@ silver_customers = spark.table(f"{SILVER_DB}.silver_customers")
 
 # Aggregate geolocation to city/state grain (1M+ rows → deduplicated)
 geo = (
-    spark.table("olist_bronze.raw_geolocation")
+    spark.table(f"{BRONZE_DB}.raw_geolocation")
     .groupBy("city", "state")
     .agg(
         F.round(F.avg("lat"), 4).alias("lat"),
@@ -170,7 +167,7 @@ orders_with_state = (
     silver_orders
     .filter(F.col("order_status") == "delivered")
     .join(
-        spark.table("olist_bronze.raw_customers").select("customer_id", "customer_unique_id"),
+        spark.table(f"{BRONZE_DB}.raw_customers").select("customer_id", "customer_unique_id"),
         on="customer_id",
         how="left",
     )
@@ -220,7 +217,7 @@ write_gold(gold_delivery, "gold_delivery_by_state")
 # MAGIC     round(csat_rate * 100, 1)   AS csat_pct,
 # MAGIC     round(on_time_rate * 100, 1) AS on_time_pct,
 # MAGIC     round(total_gmv_brl / 1000, 1) AS gmv_k_brl
-# MAGIC FROM olist_gold.gold_monthly_kpis
+# MAGIC FROM main.olist_gold.gold_monthly_kpis
 # MAGIC ORDER BY order_month
 
 # COMMAND ----------
@@ -231,7 +228,7 @@ write_gold(gold_delivery, "gold_delivery_by_state")
 
 # MAGIC %sql
 # MAGIC SELECT state, total_orders, avg_days_to_deliver, on_time_pct, avg_review_score
-# MAGIC FROM olist_gold.gold_delivery_by_state
+# MAGIC FROM main.olist_gold.gold_delivery_by_state
 # MAGIC ORDER BY avg_days_to_deliver DESC
 # MAGIC LIMIT 5
 
@@ -248,7 +245,7 @@ write_gold(gold_delivery, "gold_delivery_by_state")
 # MAGIC     count(*)                            AS customers,
 # MAGIC     round(avg(total_spend_brl), 2)      AS avg_spend_brl,
 # MAGIC     round(avg(avg_review_score), 2)     AS avg_review
-# MAGIC FROM olist_gold.gold_customer_segments
+# MAGIC FROM main.olist_gold.gold_customer_segments
 # MAGIC GROUP BY order_frequency_segment, satisfaction_segment
 # MAGIC ORDER BY customers DESC
 
