@@ -2,8 +2,12 @@ version: 2
 
 sources:
   - name: olist
-    description: Raw Olist Brazilian e-commerce CSV files loaded into DuckDB.
-    schema: main
+    description: >
+      Raw Olist Brazilian e-commerce CSV files.
+      On DuckDB (dev): loaded via external_location read_csv_auto() — schema 'main'.
+      On Databricks:   read from Bronze Delta views in olist_bronze.
+      Set DBT_OLIST_SOURCE_SCHEMA=olist_bronze before running dbt --target databricks.
+    schema: "{{ env_var('DBT_OLIST_SOURCE_SCHEMA', 'main') }}"
     tables:
       - name: orders
         description: One row per order.

@@ -15,11 +15,11 @@ order_aggs as (
         avg(distinct_products)                                                as avg_distinct_products,
         avg(distinct_sellers)                                                 as avg_distinct_sellers,
         avg(freight_total_brl)                                                as avg_freight_brl,
-        bool_or(used_voucher)                                                 as used_voucher_ever,
-        bool_or(used_credit_card)                                             as used_credit_card_ever,
-        arg_max(primary_payment_type, total_payment_value)                    as primary_payment_type,
+        {{ bool_or_agg('used_voucher') }}                                     as used_voucher_ever,
+        {{ bool_or_agg('used_credit_card') }}                                 as used_credit_card_ever,
+        {{ arg_max('primary_payment_type', 'total_payment_value') }}          as primary_payment_type,
         coalesce(min(review_score), 5)                                        as min_review_score,
-        count(case when has_review_comment then 1 end)::float
+        cast(count(case when has_review_comment then 1 end) as double)
             / nullif(count(review_score), 0)                                  as pct_reviews_with_comment
     from {{ ref('fct_orders') }}
     where customer_unique_id is not null
@@ -36,12 +36,12 @@ features as (
         d.state,
 
         -- Recency (RFM: R)
-        date_diff('day', d.last_order_at, r.reference_date)                  as days_since_last_order,
-        date_diff('day', d.first_order_at, r.reference_date)                 as days_since_first_order,
+        {{ date_diff_days('d.last_order_at', 'r.reference_date') }}            as days_since_last_order,
+        {{ date_diff_days('d.first_order_at', 'r.reference_date') }}          as days_since_first_order,
         d.customer_lifespan_days,
         coalesce(
-            date_diff('day', d.last_order_at, r.reference_date)::float
-            / nullif(date_diff('day', d.first_order_at, r.reference_date), 0),
+            cast({{ date_diff_days('d.last_order_at', 'r.reference_date') }} as double)
+            / nullif({{ date_diff_days('d.first_order_at', 'r.reference_date') }}, 0),
             1.0
         )                                                                     as recency_to_lifespan_ratio,
 
@@ -49,7 +49,7 @@ features as (
         d.total_orders,
         d.delivered_orders,
         d.canceled_orders,
-        coalesce(d.canceled_orders::float / nullif(d.total_orders, 0), 0)    as cancel_rate,
+        coalesce(cast(d.canceled_orders as double) / nullif(d.total_orders, 0), 0) as cancel_rate,
         d.order_frequency_segment,
 
         -- Monetary (RFM: M)
@@ -64,22 +64,22 @@ features as (
         -- Satisfaction signals
         coalesce(d.avg_review_score, 3.0)                                     as avg_review_score,
         d.review_count,
-        (coalesce(o.min_review_score, 5) <= 2)::integer                       as has_low_review,
+        cast(coalesce(o.min_review_score, 5) <= 2 as int)                    as has_low_review,
         coalesce(o.pct_reviews_with_comment, 0)                               as pct_reviews_with_comment,
         d.satisfaction_segment,
 
         -- Delivery experience
         coalesce(d.avg_days_to_deliver, 15)                                   as avg_days_to_deliver,
         coalesce(
-            d.on_time_deliveries::float / nullif(d.delivered_orders, 0),
+            cast(d.on_time_deliveries as double) / nullif(d.delivered_orders, 0),
             0
         )                                                                     as on_time_delivery_rate,
-        (coalesce(d.on_time_deliveries, 0) < coalesce(d.delivered_orders, 1))::integer
+        cast(coalesce(d.on_time_deliveries, 0) < coalesce(d.delivered_orders, 1) as int)
                                                                               as had_late_delivery,
 
         -- Payment behaviour
-        coalesce(o.used_voucher_ever, false)::integer                         as used_voucher_ever,
-        coalesce(o.used_credit_card_ever, false)::integer                     as used_credit_card_ever,
+        cast(coalesce(o.used_voucher_ever, false) as int)                     as used_voucher_ever,
+        cast(coalesce(o.used_credit_card_ever, false) as int)                 as used_credit_card_ever,
         coalesce(o.primary_payment_type, 'unknown')                           as primary_payment_type,
 
         -- Basket composition

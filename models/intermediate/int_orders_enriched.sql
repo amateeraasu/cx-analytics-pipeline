@@ -9,6 +9,20 @@ payments as (
 
 reviews as (
     -- Use the latest review per order if duplicates exist.
+    -- DISTINCT ON is DuckDB/PostgreSQL; Spark SQL needs ROW_NUMBER() instead.
+    {% if target.type == 'databricks' %}
+    select order_id, review_score, comment_title, comment_message,
+           review_created_at, review_answered_at
+    from (
+        select *,
+               row_number() over (
+                   partition by order_id
+                   order by review_created_at desc
+               ) as _rn
+        from {{ ref('stg_order_reviews') }}
+    ) _ranked
+    where _rn = 1
+    {% else %}
     select distinct on (order_id)
         order_id,
         review_score,
@@ -18,6 +32,7 @@ reviews as (
         review_answered_at
     from {{ ref('stg_order_reviews') }}
     order by order_id, review_created_at desc
+    {% endif %}
 ),
 
 enriched as (
@@ -32,12 +47,12 @@ enriched as (
         o.estimated_delivery_at,
 
         -- Delivery performance
-        date_diff('day', o.purchased_at, o.customer_delivered_at)          as days_to_deliver,
-        date_diff('day', o.estimated_delivery_at, o.customer_delivered_at) as delivery_delta_days,
-        o.customer_delivered_at <= o.estimated_delivery_at                 as delivered_on_time,
+        {{ date_diff_days('o.purchased_at', 'o.customer_delivered_at') }}          as days_to_deliver,
+        {{ date_diff_days('o.estimated_delivery_at', 'o.customer_delivered_at') }} as delivery_delta_days,
+        o.customer_delivered_at <= o.estimated_delivery_at                         as delivered_on_time,
 
         -- Approval speed
-        date_diff('hour', o.purchased_at, o.approved_at)                   as hours_to_approve,
+        {{ date_diff_hours('o.purchased_at', 'o.approved_at') }}                   as hours_to_approve,
 
         -- Payment
         p.total_payment_value,

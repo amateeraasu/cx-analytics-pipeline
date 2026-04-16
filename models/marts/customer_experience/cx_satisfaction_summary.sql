@@ -13,12 +13,12 @@ monthly as (
         round(avg(days_to_deliver), 2)                              as avg_days_to_deliver,
 
         round(
-            count(case when review_score >= 4 then 1 end)::float
+            cast(count(case when review_score >= 4 then 1 end) as double)
             / nullif(count(review_score), 0), 4
         )                                                           as csat_rate,
 
         round(
-            count(case when delivered_on_time then 1 end)::float
+            cast(count(case when delivered_on_time then 1 end) as double)
             / nullif(count(order_id), 0), 4
         )                                                           as on_time_rate,
 

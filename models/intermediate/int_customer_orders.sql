@@ -12,8 +12,8 @@ customer_orders as (
         c.customer_unique_id,
         -- A customer may have different customer_ids per order (Olist quirk);
         -- use the most recent state/city as the canonical address.
-        arg_max(c.state, o.purchased_at)                            as state,
-        arg_max(c.city, o.purchased_at)                             as city,
+        {{ arg_max('c.state', 'o.purchased_at') }}                  as state,
+        {{ arg_max('c.city', 'o.purchased_at') }}                   as city,
 
         count(o.order_id)                                           as total_orders,
         count(case when o.order_status = 'delivered' then 1 end)    as delivered_orders,
@@ -21,7 +21,7 @@ customer_orders as (
 
         min(o.purchased_at)                                         as first_order_at,
         max(o.purchased_at)                                         as last_order_at,
-        date_diff('day', min(o.purchased_at), max(o.purchased_at))  as customer_lifespan_days,
+        {{ date_diff_days('min(o.purchased_at)', 'max(o.purchased_at)') }} as customer_lifespan_days,
 
         round(sum(o.total_payment_value), 2)                        as total_spend_brl,
         round(avg(o.total_payment_value), 2)                        as avg_order_value_brl,

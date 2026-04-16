@@ -185,6 +185,10 @@ ingest_csv(
         F.col("product_description_lenght").cast("integer").alias("description_length"),
         F.col("product_photos_qty").cast("integer").alias("photos_qty"),
         F.col("product_weight_g").cast("double").alias("weight_g"),
+        # Physical dimensions — needed by dbt stg_products
+        F.col("product_length_cm").cast("double").alias("product_length_cm"),
+        F.col("product_height_cm").cast("double").alias("product_height_cm"),
+        F.col("product_width_cm").cast("double").alias("product_width_cm"),
     )
 )
 
@@ -241,5 +245,125 @@ spark.sql(f"""
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 4. dbt compatibility views
+# MAGIC
+# MAGIC The Bronze tables renamed several columns for clarity (e.g. `customer_city` → `city`).
+# MAGIC The dbt staging models expect the original CSV column names, so we create lightweight
+# MAGIC views that restore the original names.
+# MAGIC
+# MAGIC After running these views, the dbt pipeline can run on Databricks unchanged:
+# MAGIC ```bash
+# MAGIC export DBT_OLIST_SOURCE_SCHEMA=olist_bronze
+# MAGIC dbt run --target databricks --profiles-dir .
+# MAGIC ```
+
+# COMMAND ----------
+
+print("Creating dbt compatibility views in olist_bronze...\n")
+
+# orders — no column renames, just alias the raw table
+spark.sql(f"CREATE OR REPLACE VIEW {BRONZE_DB}.orders AS SELECT * FROM {BRONZE_DB}.raw_orders")
+print("  ✓  olist_bronze.orders")
+
+# customers — restore prefixed column names
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.customers AS
+    SELECT
+        customer_id,
+        customer_unique_id,
+        zip_code_prefix  AS customer_zip_code_prefix,
+        city             AS customer_city,
+        state            AS customer_state
+    FROM {BRONZE_DB}.raw_customers
+""")
+print("  ✓  olist_bronze.customers")
+
+# order_items — no column renames
+spark.sql(f"CREATE OR REPLACE VIEW {BRONZE_DB}.order_items AS SELECT * FROM {BRONZE_DB}.raw_order_items")
+print("  ✓  olist_bronze.order_items")
+
+# order_payments — no column renames
+spark.sql(f"CREATE OR REPLACE VIEW {BRONZE_DB}.order_payments AS SELECT * FROM {BRONZE_DB}.raw_order_payments")
+print("  ✓  olist_bronze.order_payments")
+
+# order_reviews — restore original date column names
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.order_reviews AS
+    SELECT
+        review_id,
+        order_id,
+        review_score,
+        review_comment_title,
+        review_comment_message,
+        review_created_at  AS review_creation_date,
+        review_answered_at AS review_answer_timestamp
+    FROM {BRONZE_DB}.raw_order_reviews
+""")
+print("  ✓  olist_bronze.order_reviews")
+
+# products — restore original column names and spellings (incl. typos in source data)
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.products AS
+    SELECT
+        product_id,
+        category_name_pt    AS product_category_name,
+        name_length         AS product_name_lenght,
+        description_length  AS product_description_lenght,
+        photos_qty          AS product_photos_qty,
+        weight_g            AS product_weight_g,
+        product_length_cm,
+        product_height_cm,
+        product_width_cm
+    FROM {BRONZE_DB}.raw_products
+""")
+print("  ✓  olist_bronze.products")
+
+# sellers — restore prefixed column names
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.sellers AS
+    SELECT
+        seller_id,
+        zip_code_prefix  AS seller_zip_code_prefix,
+        city             AS seller_city,
+        state            AS seller_state
+    FROM {BRONZE_DB}.raw_sellers
+""")
+print("  ✓  olist_bronze.sellers")
+
+# geolocation — restore original prefixed column names
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.geolocation AS
+    SELECT
+        zip_code_prefix  AS geolocation_zip_code_prefix,
+        lat              AS geolocation_lat,
+        lng              AS geolocation_lng,
+        city             AS geolocation_city,
+        state            AS geolocation_state
+    FROM {BRONZE_DB}.raw_geolocation
+""")
+print("  ✓  olist_bronze.geolocation")
+
+# category_translation — no column renames
+spark.sql(f"""
+    CREATE OR REPLACE VIEW {BRONZE_DB}.category_translation
+    AS SELECT * FROM {BRONZE_DB}.raw_category_translation
+""")
+print("  ✓  olist_bronze.category_translation")
+
+print("\nAll 8 compatibility views created.")
+print(f"Run: dbt run --target databricks --profiles-dir . (with DBT_OLIST_SOURCE_SCHEMA=olist_bronze)")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Next step
 # MAGIC Run **`02_silver_transform`** to clean, join, and enrich the Bronze tables.
+# MAGIC
+# MAGIC Or, if running the full dbt pipeline on Databricks:
+# MAGIC ```bash
+# MAGIC export DBT_OLIST_SOURCE_SCHEMA=olist_bronze
+# MAGIC export DBT_DATABRICKS_HOST=<your-workspace>.azuredatabricks.net
+# MAGIC export DBT_DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
+# MAGIC export DBT_DATABRICKS_TOKEN=<personal-access-token>
+# MAGIC dbt run --target databricks --profiles-dir .
+# MAGIC ```

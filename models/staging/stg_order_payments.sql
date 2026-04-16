@@ -9,11 +9,11 @@ aggregated as (
         count(*)                                                as payment_installments_total,
         round(sum(payment_value), 2)                            as total_payment_value,
         -- predominant payment type (highest value)
-        arg_max(payment_type, payment_value)                    as primary_payment_type,
-        bool_or(payment_type = 'voucher')                       as used_voucher,
-        bool_or(payment_type = 'boleto')                        as used_boleto,
-        bool_or(payment_type = 'credit_card')                   as used_credit_card,
-        bool_or(payment_type = 'debit_card')                    as used_debit_card
+        {{ arg_max('payment_type', 'payment_value') }}          as primary_payment_type,
+        {{ bool_or_agg("payment_type = 'voucher'") }}           as used_voucher,
+        {{ bool_or_agg("payment_type = 'boleto'") }}            as used_boleto,
+        {{ bool_or_agg("payment_type = 'credit_card'") }}       as used_credit_card,
+        {{ bool_or_agg("payment_type = 'debit_card'") }}        as used_debit_card
     from source
     group by order_id
 )
