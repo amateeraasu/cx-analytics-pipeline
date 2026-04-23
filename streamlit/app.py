@@ -69,7 +69,7 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Monthly KPIs", "🚚 Delivery by State", "⚠️ Churn Risk", "🔍 Audit Log"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Monthly KPIs", "🚚 Delivery by State", "⚠️ Churn Risk", "🔍 Audit Log", "🗺️ Data Lineage"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -482,3 +482,164 @@ with tab4:
             import time
             time.sleep(5)
             st.rerun()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 5 · Data Lineage
+# ──────────────────────────────────────────────────────────────────────────────
+
+MANIFEST_PATH = Path(__file__).parent.parent / "target" / "manifest.json"
+
+LAYER_COLORS = {
+    "source":       "#95a5a6",
+    "staging":      "#3498db",
+    "intermediate": "#e67e22",
+    "marts":        "#2ecc71",
+}
+
+LAYER_Y = {
+    "source":       0,
+    "staging":      1,
+    "intermediate": 2,
+    "marts":        3,
+}
+
+with tab5:
+    st.subheader("dbt Model Lineage")
+    st.caption("How every model flows from raw source data to mart tables. Built from `target/manifest.json`.")
+
+    if not MANIFEST_PATH.exists():
+        st.info("Run `dbt run --profiles-dir .` first to generate the manifest.", icon="ℹ️")
+    else:
+        import json
+        import plotly.graph_objects as go
+
+        with open(MANIFEST_PATH) as f:
+            manifest = json.load(f)
+
+        # ── Build node list ───────────────────────────────────────────────────
+        model_nodes = {
+            k: v for k, v in manifest["nodes"].items()
+            if v["resource_type"] == "model"
+        }
+        source_nodes = {
+            k: v for k, v in manifest["sources"].items()
+        }
+
+        def get_layer(node):
+            path = node.get("path", "")
+            if "staging" in path:    return "staging"
+            if "intermediate" in path: return "intermediate"
+            if "marts" in path:      return "marts"
+            return "staging"
+
+        # Collect all node names
+        all_names = {}
+        for k, v in model_nodes.items():
+            all_names[k] = {"name": v["name"], "layer": get_layer(v)}
+        for k, v in source_nodes.items():
+            all_names[k] = {"name": v["name"], "layer": "source"}
+
+        # ── Position nodes by layer ───────────────────────────────────────────
+        layer_counts = {}
+        for info in all_names.values():
+            l = info["layer"]
+            layer_counts[l] = layer_counts.get(l, 0) + 1
+
+        layer_idx = {l: 0 for l in layer_counts}
+        positions = {}
+        for k, info in all_names.items():
+            l = info["layer"]
+            count = layer_counts[l]
+            x = (layer_idx[l] - (count - 1) / 2) * 2.2
+            y = LAYER_Y[l] * 2.5
+            positions[k] = (x, y)
+            layer_idx[l] += 1
+
+        # ── Build edges ───────────────────────────────────────────────────────
+        edge_x, edge_y = [], []
+        for k, v in model_nodes.items():
+            for dep in v.get("depends_on", {}).get("nodes", []):
+                if dep in positions and k in positions:
+                    x0, y0 = positions[dep]
+                    x1, y1 = positions[k]
+                    edge_x += [x0, x1, None]
+                    edge_y += [y0, y1, None]
+
+        # ── Build node traces per layer ───────────────────────────────────────
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=edge_x, y=edge_y,
+            mode="lines",
+            line=dict(color="#bdc3c7", width=1.2),
+            hoverinfo="none",
+            showlegend=False,
+        ))
+
+        for layer, color in LAYER_COLORS.items():
+            keys = [k for k, info in all_names.items() if info["layer"] == layer]
+            if not keys:
+                continue
+            xs = [positions[k][0] for k in keys]
+            ys = [positions[k][1] for k in keys]
+            names = [all_names[k]["name"] for k in keys]
+
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys,
+                mode="markers+text",
+                name=layer.capitalize(),
+                marker=dict(size=28, color=color, line=dict(width=2, color="white")),
+                text=names,
+                textposition="top center",
+                textfont=dict(size=10),
+                hovertemplate="<b>%{text}</b><br>Layer: " + layer + "<extra></extra>",
+            ))
+
+        fig.update_layout(
+            height=620,
+            plot_bgcolor="#0e1117",
+            paper_bgcolor="#0e1117",
+            font_color="white",
+            showlegend=True,
+            legend=dict(
+                title="Layer",
+                bgcolor="#1a1a2e",
+                bordercolor="#444",
+                borderwidth=1,
+            ),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(
+                showgrid=False, zeroline=False, showticklabels=False,
+                tickvals=list(LAYER_Y.values()),
+                ticktext=list(LAYER_Y.keys()),
+            ),
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+
+        # Y-axis layer labels
+        for layer, y_pos in LAYER_Y.items():
+            fig.add_annotation(
+                x=-8, y=y_pos * 2.5,
+                text=f"<b>{layer.upper()}</b>",
+                showarrow=False,
+                font=dict(size=11, color=LAYER_COLORS[layer]),
+                xanchor="left",
+            )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ── Model detail table ────────────────────────────────────────────────
+        st.subheader("Model Details")
+        rows = []
+        for k, v in model_nodes.items():
+            deps = [d.split(".")[-1] for d in v.get("depends_on", {}).get("nodes", [])]
+            rows.append({
+                "Model":       v["name"],
+                "Layer":       get_layer(v).capitalize(),
+                "Depends On":  ", ".join(deps) if deps else "—",
+                "Description": v.get("description", "")[:80],
+            })
+
+        detail_df = pd.DataFrame(rows).sort_values(["Layer", "Model"])
+        st.dataframe(detail_df, use_container_width=True, hide_index=True, height=420)
