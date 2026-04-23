@@ -69,7 +69,7 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["📈 Monthly KPIs", "🚚 Delivery by State", "⚠️ Churn Risk"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Monthly KPIs", "🚚 Delivery by State", "⚠️ Churn Risk", "🔍 Audit Log"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -350,3 +350,135 @@ with tab3:
             )
             fig9.update_layout(showlegend=False)
             st.plotly_chart(fig10, use_container_width=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB 4 · Audit Log
+# ──────────────────────────────────────────────────────────────────────────────
+
+LOG_PATH = Path(__file__).parent.parent / "logs" / "mcp_audit.log"
+
+with tab4:
+    st.subheader("MCP Server Audit Log")
+    st.caption("Every query executed by the MCP server — tool name, parameters, row count, duration, status.")
+
+    if not LOG_PATH.exists():
+        st.info("No audit log found. Run the MCP server and make some queries first.", icon="ℹ️")
+    else:
+        auto_refresh = st.toggle("Auto-refresh every 5 seconds", value=False)
+        if auto_refresh:
+            st.write("🟢 Live — refreshing every 5s")
+
+        # Read JSON Lines log — INFO level only (skip DEBUG)
+        rows = []
+        with open(LOG_PATH) as f:
+            for line in f:
+                try:
+                    import json
+                    entry = json.loads(line)
+                    if entry.get("level") == "INFO" and entry.get("event") == "data_access":
+                        rows.append({
+                            "timestamp":   entry.get("timestamp", "")[:19].replace("T", " "),
+                            "session":     entry.get("session", ""),
+                            "function":    entry.get("function", ""),
+                            "row_count":   entry.get("row_count", 0),
+                            "duration_ms": entry.get("duration_ms", 0),
+                            "status":      entry.get("status", ""),
+                            "params":      str(entry.get("params", "")),
+                        })
+                except Exception:
+                    continue
+
+        if not rows:
+            st.info("Log file exists but has no data access entries yet.")
+        else:
+            log_df = pd.DataFrame(rows)
+            log_df["timestamp"] = pd.to_datetime(log_df["timestamp"])
+            log_df = log_df.sort_values("timestamp", ascending=False)
+
+            # ── Summary KPIs ──────────────────────────────────────────────────
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Queries",    len(log_df))
+            k2.metric("Avg Duration",     f"{log_df['duration_ms'].mean():.1f} ms")
+            k3.metric("Errors",           int((log_df["status"] == "error").sum()))
+            k4.metric("Unique Sessions",  log_df["session"].nunique())
+
+            st.divider()
+
+            # ── Charts ────────────────────────────────────────────────────────
+            col_l, col_r = st.columns(2)
+
+            with col_l:
+                calls_by_fn = log_df["function"].value_counts().reset_index()
+                calls_by_fn.columns = ["function", "calls"]
+                fig_a = px.bar(
+                    calls_by_fn, x="function", y="calls",
+                    title="Calls per Tool",
+                    color="calls",
+                    color_continuous_scale="Blues",
+                    height=320,
+                )
+                fig_a.update_layout(coloraxis_showscale=False, showlegend=False)
+                st.plotly_chart(fig_a, use_container_width=True)
+
+            with col_r:
+                avg_dur = log_df.groupby("function")["duration_ms"].mean().reset_index()
+                avg_dur.columns = ["function", "avg_ms"]
+                avg_dur = avg_dur.sort_values("avg_ms", ascending=False)
+                fig_b = px.bar(
+                    avg_dur, x="function", y="avg_ms",
+                    title="Avg Duration per Tool (ms)",
+                    color="avg_ms",
+                    color_continuous_scale="Oranges",
+                    height=320,
+                )
+                fig_b.update_layout(coloraxis_showscale=False)
+                st.plotly_chart(fig_b, use_container_width=True)
+
+            # ── Filters ───────────────────────────────────────────────────────
+            st.subheader("Query History")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                fn_filter = st.multiselect(
+                    "Filter by tool",
+                    options=sorted(log_df["function"].unique()),
+                    default=[],
+                )
+            with col_f2:
+                status_filter = st.multiselect(
+                    "Filter by status",
+                    options=["success", "error"],
+                    default=[],
+                )
+
+            filtered = log_df.copy()
+            if fn_filter:
+                filtered = filtered[filtered["function"].isin(fn_filter)]
+            if status_filter:
+                filtered = filtered[filtered["status"].isin(status_filter)]
+
+            # ── Table ─────────────────────────────────────────────────────────
+            st.dataframe(
+                filtered[["timestamp", "function", "row_count", "duration_ms", "status", "session", "params"]]
+                .rename(columns={
+                    "timestamp":   "Timestamp",
+                    "function":    "Tool",
+                    "row_count":   "Rows",
+                    "duration_ms": "Duration (ms)",
+                    "status":      "Status",
+                    "session":     "Session",
+                    "params":      "Params",
+                })
+                .style.map(
+                    lambda v: "color: #e74c3c" if v == "error" else "",
+                    subset=["Status"]
+                ),
+                use_container_width=True,
+                hide_index=True,
+                height=400,
+            )
+
+        if auto_refresh:
+            import time
+            time.sleep(5)
+            st.rerun()
